@@ -30,12 +30,24 @@
         const SHIP_THRUST = 5; // acceleration in pixels per second^2
         const TURN_SPEED = 360 // degrees per second
         const SHOW_BOUNDING = false; // show or hide collision bounding
+        const MUSIC_ON = true; // turn game music on/off
+        const SOUND_ON = true; // turn game sounds on/off
         const TEXT_FADE_TIME = 2.5; // text fade in sec
         const TEXT_SIZE = 40; // text font height in px;
 
         /** @type {HTMLCanvasElement} */
         const canv = document.getElementById("gameCanvas");
         const ctx = canv.getContext("2d");
+
+        // set up sound effects
+        const fxLaser = new Sound("sounds/laser.m4a", 5, 0.5); // when laser fires
+        const fxExplode = new Sound("sounds/explode.m4a"); // when ship collides with asteroid
+        const fxHit = new Sound("sounds/hit.m4a", 5); // when asteroid is hit by laser
+        const fxThrust = new Sound("sounds/thrust.m4a", 1, 0.5); // when ship thrusts forward
+
+        // set up music
+        const music = new Music("sounds/music-low.m4a", "sounds/music-high.m4a");
+        let roidsLeft, roidsTotal;
 
         // set up the game parameters
         let level, roids, ship, text, textAlpha, lives, score, scoreHigh;
@@ -50,6 +62,8 @@
 
         function createAsteroidBelt() {
             roids = []; // clear asteroids
+            roidsTotal = (ROIDS_NUM + level) * 7;
+            roidsLeft = roidsTotal;
             let x, y;
             for (let i = 0; i < ROIDS_NUM + level; i++) {
                 do {
@@ -88,6 +102,11 @@
 
             // destroy asteroid
             roids.splice(index, 1);
+            fxHit.play();
+
+            // calc the ratio of remaining asteroids for music tempo
+            roidsLeft--;
+            music.setAsteroidRatio(roidsLeft === 0 ? 1 : roidsLeft / roidsTotal);
 
             // new level when all asteroids destroyed
             if (roids.length === 0) {
@@ -127,14 +146,8 @@
         }
 
         function explodeShip() {
-            // ctx.fillStyle = "lime";
-            // ctx.strokeStyle = "lime";
-            // ctx.beginPath();
-            // ctx.arc(ship.x, ship.y, ship.r, 0, Math.PI * 2, false);
-            // ctx.fill();
-            // ctx.stroke();
-
             ship.explodeTime = Math.ceil(SHIP_EXPLODE_DUR * FPS);
+            fxExplode.play();
         }
 
         function gameOver() {
@@ -263,15 +276,82 @@
                     dist: 0,
                     explodeTime: 0,
                 })
+                fxLaser.play();
             }
 
             // prevent further shooting
             ship.canShoot = false;
         }
 
+        // Plays background music, increasing in tempo with each level
+        function Music(srcLow, srcHigh) {
+            this.soundLow = new Audio(srcLow);
+            this.soundHigh = new Audio(srcHigh);
+            this.low = true;
+            this.tempo = 1.0; // sec/beat
+            this.beatTime = 0; // frames left until next beat
+
+            // alternates between low and high sound
+            this.play = () => {
+                if (MUSIC_ON) {
+                    if (this.low) {
+                        this.soundLow.play();
+                    } else {
+                        this.soundHigh.play();
+                    }
+                    this.low = !this.low;
+                }
+            }
+
+            this.setAsteroidRatio = (ratio) => {
+                this.tempo = 1.0 - 0.75 * (1.0 - ratio);
+            }
+
+            this.tick = () => {
+                if (this.beatTime === 0) {
+                    this.play();
+                    this.beatTime = Math.ceil(this.tempo * FPS);
+                }
+                else {
+                    this.beatTime--;
+                }
+            }
+        }
+
+        /** Adjusts how sound effects are played & their volume.
+         * @param {string} src sound file
+         * @param maxStreams max num of times sound can be played
+         * @param vol adjusts volume of sound
+         * */
+        function Sound(src, maxStreams = 1, vol = 1.0) {
+            this.streamNum = 0;
+            this.streams = [];
+            for (let i = 0; i < maxStreams; i++) {
+                this.streams.push(new Audio(src));
+                this.streams[i].volume = vol;
+            }
+
+            // Sound plays each time it's called, not just when prev sound ends, limited to maxStreams amount.
+            // ex: If player fires multiple lasers at once, sound will play for each laser.
+            this.play = () => {
+                if (SOUND_ON) {
+                    this.streamNum = (this.streamNum + 1) % maxStreams;
+                    this.streams[this.streamNum].play();
+                }
+            }
+
+            this.stop = () => {
+                this.streams[this.streamNum].pause();
+                this.streams[this.streamNum].currentTime = 0;
+            }
+        }
+
         function update() {
             let blinkOn = ship.blinkNum % 2 === 0;
             let exploding = ship.explodeTime > 0;
+
+            // tick the music
+            music.tick();
 
             // draw space background
             ctx.fillStyle = "black";
@@ -281,6 +361,7 @@
             if (ship.thrusting && !ship.dead) {
                 ship.thrust.x += SHIP_THRUST * Math.cos(ship.a) / FPS;
                 ship.thrust.y -= SHIP_THRUST * Math.sin(ship.a) / FPS;
+                fxThrust.play();
 
                 // draw the thruster
                 if (!exploding && blinkOn) {
@@ -311,6 +392,7 @@
             } else {
                 ship.thrust.x -= FRICTION * ship.thrust.x / FPS;
                 ship.thrust.y -= FRICTION * ship.thrust.y / FPS;
+                fxThrust.stop();
             }
 
             // draw triangular ship
